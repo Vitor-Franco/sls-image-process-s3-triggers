@@ -1,0 +1,90 @@
+org: teste
+service: teste
+
+provider:
+  name: aws
+  runtime: nodejs20.x
+  architecture: arm64
+  region: us-east-1
+  memorySize: 128
+  environment:
+    LIVES_TABLE: !Ref LivesTable
+    LIVES_IMAGES_BUCKET: !Ref LivesImagesBucket
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - dynamodb:PutItem
+            - dynamodb:UpdateItem
+          Resource: !GetAtt LivesTable.Arn
+        - Effect: Allow
+          Action:
+            - s3:PutObject
+            - s3:GetObject
+          Resource: !Join ['/', [!GetAtt LivesImagesBucket.Arn, '*']]
+
+package:
+  individually: true
+
+build:
+  esbuild:
+    bundle: true
+    minify: true
+    sourcemap: false
+    exclude:
+      - '@aws-sdk/*'
+      - sharp # dont put sharp in node_modules
+    external:
+      - sharp # used to dont put sharp in bundle of lambdas
+      # it is a necessary config to use sharp in lambda layers
+
+layers:
+  Sharp:
+    name: sharp-layer
+    description: sharp package and its binaries.
+    path: layers/sharp
+    retain: false # não mantém versões dos layers
+    compatibleArchitectures:
+      - arm64
+    compatibleRuntimes:
+      - nodejs20.x
+
+functions:
+  createLive:
+    handler: src/functions/http/createLive.handler
+    events:
+      - httpApi:
+          path: /lives
+          method: POST
+  processImage:
+    handler: src/functions/triggers/processImage.handler
+    memorySize: 1024
+    layers:
+      - !Ref SharpLambdaLayer # uses the LambdaLayer sufix because is automatically added by SLS
+    events:
+      - s3:
+          bucket: !Ref LivesImagesBucket
+          event: s3:ObjectCreated:*
+          existing: true
+          forceDeploy: true
+          rules:
+            - prefix: uploads/ # to avoid loop in trigger processing
+
+resources:
+  Resources:
+    LivesTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: LivesTable
+        BillingMode: PAY_PER_REQUEST
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S
+        KeySchema:
+          - AttributeName: id
+            KeyType: HASH
+    LivesImagesBucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: lives-images-bucket-052
