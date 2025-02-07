@@ -1,34 +1,24 @@
-import type { S3Event } from "aws-lambda";
+import type { SQSEvent } from "aws-lambda";
 import { getS3Object } from "../../utils/getS3Object";
 import sharp from "sharp";
 import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { extractFileInfo } from "../../utils/extractFileInfo";
 import { s3Client } from "../../clients/s3Client";
-import { getS3ObjectMetadata } from "../../utils/getS3ObjectMetadata";
 import { UpdateCommand } from "@aws-sdk/lib-dynamodb";
 import { env } from "../../config/env";
 import { dynamoClient } from "../../clients/dynamoClient";
 
-export async function handler(event: S3Event) {
+export async function handler(event: SQSEvent) {
 	await Promise.all(
 		event.Records.map(async (record) => {
-			const { bucket, object } = record.s3;
-
-			const bucketName = bucket.name;
-			const bucketKey = object.key;
+			const { bucket, key } = JSON.parse(record.body);
 
 			const s3Payload = {
-				bucket: bucketName,
-				key: bucketKey,
+				bucket,
+				key,
 			};
 
-			const [file, metadata] = await Promise.all([
-				getS3Object(s3Payload),
-				getS3ObjectMetadata(s3Payload),
-			]);
-
-			console.log(file);
-			console.log(metadata);
+			const { file, metadata } = await getS3Object(s3Payload);
 
 			const liveId = metadata.liveid;
 
@@ -37,7 +27,7 @@ export async function handler(event: S3Event) {
 			}
 
 			const [imageHD, imageSD, placeholderImage] = await Promise.all([
-				sharp(file.file)
+				sharp(file)
 					.resize({
 						width: 1280,
 						height: 720,
@@ -48,7 +38,7 @@ export async function handler(event: S3Event) {
 						quality: 80,
 					})
 					.toBuffer(),
-				sharp(file.file)
+				sharp(file)
 					.resize({
 						width: 640,
 						height: 360,
@@ -59,7 +49,7 @@ export async function handler(event: S3Event) {
 						quality: 80,
 					})
 					.toBuffer(),
-				sharp(file.file)
+				sharp(file)
 					.resize({
 						width: 124,
 						height: 70,
@@ -73,13 +63,13 @@ export async function handler(event: S3Event) {
 					.toBuffer(),
 			]);
 
-			const { fileName } = extractFileInfo(bucketKey);
+			const { fileName } = extractFileInfo(key);
 			const thumbnailKeyHD = `processed/${fileName}_hd.webp`; // processed/ to avoid loop in trigger processing
 			const thumbnailKeySD = `processed/${fileName}_sd.webp`;
 			const thumbnailKeyPlaceholder = `processed/${fileName}_placeholder.webp`;
 
 			const hdPutObject = new PutObjectCommand({
-				Bucket: bucketName,
+				Bucket: bucket,
 				Key: thumbnailKeyHD,
 				Body: imageHD,
 				Metadata: {
@@ -88,7 +78,7 @@ export async function handler(event: S3Event) {
 			});
 
 			const sdPutObject = new PutObjectCommand({
-				Bucket: bucketName,
+				Bucket: bucket,
 				Key: thumbnailKeySD,
 				Body: imageSD,
 				Metadata: {
@@ -97,7 +87,7 @@ export async function handler(event: S3Event) {
 			});
 
 			const placeholderPutObject = new PutObjectCommand({
-				Bucket: bucketName,
+				Bucket: bucket,
 				Key: thumbnailKeyPlaceholder,
 				Body: placeholderImage,
 				Metadata: {

@@ -13,7 +13,7 @@ export async function getS3Object({ bucket, key }: Props) {
 		Key: key,
 	});
 
-	const { Body, Metadata } = await s3Client.send(getObjectCommand);
+	const { Body, Metadata = {} } = await s3Client.send(getObjectCommand);
 
 	if (!(Body instanceof Readable)) {
 		throw new Error(`Cannot find file: ${bucket}/${key}`);
