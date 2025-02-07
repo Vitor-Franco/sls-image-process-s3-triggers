@@ -1,8 +1,7 @@
 import type { S3Event } from "aws-lambda";
-import { env } from "../../config/env";
-import { SendMessageBatchCommand } from "@aws-sdk/client-sqs";
 import { randomUUID } from "node:crypto";
-import { sqsClient } from "../../clients/sqsClient";
+import { sendSQSBatchMessage } from "../../utils/sendSQSBatchMessage";
+import { env } from "../../config/env";
 
 export async function handler(event: S3Event) {
 	const BATCH_LIMIT_SQS = 10;
@@ -19,29 +18,22 @@ export async function handler(event: S3Event) {
 			}),
 		};
 
-		if (batchChunks.length < BATCH_LIMIT_SQS) {
-			batchChunks.push(s3RecordPayload);
-			continue;
+		if (batchChunks.length === BATCH_LIMIT_SQS) {
+			await sendSQSBatchMessage({
+				queueUrl: env.IMAGE_PROCESSING_QUEUE_URL,
+				entries: batchChunks,
+			});
+			batchChunks = [];
 		}
 
-		const batchSendMessageCommand = new SendMessageBatchCommand({
-			QueueUrl: env.IMAGE_PROCESSING_QUEUE_URL,
-			Entries: batchChunks,
-		});
-
-		await sqsClient.send(batchSendMessageCommand);
-
-		batchChunks = [];
 		batchChunks.push(s3RecordPayload);
 	}
 
-	if (batchChunks.length) {
+	if (batchChunks.length > 0) {
 		// when there are records to process but less than 10
-		const batchSendMessageCommand = new SendMessageBatchCommand({
-			QueueUrl: env.IMAGE_PROCESSING_QUEUE_URL,
-			Entries: batchChunks,
+		await sendSQSBatchMessage({
+			queueUrl: env.IMAGE_PROCESSING_QUEUE_URL,
+			entries: batchChunks,
 		});
-
-		await sqsClient.send(batchSendMessageCommand);
 	}
 }
